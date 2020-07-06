@@ -109,12 +109,9 @@
    
    
    <!-- Loader node implementations -->
-<!-- See AP-12028   
    <extension point="org.knime.database.nodes.LoaderNode">
-      <LoaderNode dbTypes="redshift" class="org.knime.cloud.aws.redshift.connector2.utility.RedshiftDBLoaderNode"/>
+      <LoaderNode dbTypes="redshift" class="org.knime.cloud.aws.redshift.connector2.utility.load.RedshiftDBLoaderNode"/>
    </extension>
--->
-
 
 
     <!-- Type mapping service -->    

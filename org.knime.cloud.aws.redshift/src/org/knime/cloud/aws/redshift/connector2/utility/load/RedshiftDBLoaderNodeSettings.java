@@ -1,6 +1,5 @@
 /*
  * ------------------------------------------------------------------------
- *
  *  Copyright by KNIME AG, Zurich, Switzerland
  *  Website: http://www.knime.com; Email: contact@knime.com
  *
@@ -41,36 +40,86 @@
  *  propagated with or for interoperation with KNIME.  The owner of a Node
  *  may freely choose the license terms applicable to such Node, including
  *  when such Node is propagated with or for interoperation with KNIME.
- * ---------------------------------------------------------------------
- *
- * History
- *   Jun 13, 2019 (Tobias): created
+ * ------------------------------------------------------------------------
  */
-package org.knime.cloud.aws.redshift.connector2.utility;
+package org.knime.cloud.aws.redshift.connector2.utility.load;
 
-import org.knime.core.node.ExecutionMonitor;
-import org.knime.database.agent.loader.DBLoader;
-import org.knime.database.session.DBSessionReference;
+import static java.util.Objects.requireNonNull;
+
+import org.knime.core.node.defaultnodesettings.SettingsModelString;
+import org.knime.database.node.component.dbrowser.SettingsModelDBMetadata;
+import org.knime.database.node.io.load.DBLoaderNode.ModelDelegate;
 
 /**
+ * Node model settings for {@link RedshiftDBLoaderNode}.
  *
  * @author Tobias Koetter, KNIME GmbH, Konstanz, Germany
  */
-public class RedshiftDBLoader implements DBLoader {
+public class RedshiftDBLoaderNodeSettings {
+
+    private final ModelDelegate m_modelDelegate;
+
+    private final SettingsModelDBMetadata m_tableNameModel;
 
     /**
-     * @param sessionReference
+     * The key for the target folder path string in the node dialog and model settings.
      */
-    public RedshiftDBLoader(final DBSessionReference sessionReference) {
-        // TODO AP-12028
+    protected static final String SETTINGS_KEY_TARGET_FOLDER = "targetFolder";
+
+    private final SettingsModelString m_targetFolderModel;
+
+    /**
+     * @param modelDelegate
+     */
+    public RedshiftDBLoaderNodeSettings(final ModelDelegate modelDelegate) {
+        m_modelDelegate = requireNonNull(modelDelegate, "modelDelegate");
+        m_tableNameModel = createTableNameModel();
+        m_targetFolderModel = createTargetFolderModel();
     }
 
     /**
-     * {@inheritDoc}
+     * Gets the delegate of the node model the settings have been created for.
+     *
+     * @return a {@link ModelDelegate} object.
      */
-    @Override
-    public void load(final ExecutionMonitor executionMonitor, final Object parameters) throws Exception {
-        // TODO AP-12028
+    public ModelDelegate getModelDelegate() {
+        return m_modelDelegate;
+    }
+
+    /**
+     * Gets the settings model of the target folder for copying/uploading the file.
+     *
+     * @return a {@linkplain SettingsModelString} object that contains a folder path string.
+     */
+    public SettingsModelString getTargetFolderModel() {
+        return m_targetFolderModel;
+    }
+
+    /**
+     * Creates the target folder settings model.
+     *
+     * @return a {@link SettingsModelString} object.
+     */
+    protected SettingsModelString createTargetFolderModel() {
+        return new SettingsModelString(SETTINGS_KEY_TARGET_FOLDER, "");
+    }
+
+    /**
+     * Gets the database table name settings model.
+     *
+     * @return a {@link SettingsModelDBMetadata} object.
+     */
+    public SettingsModelDBMetadata getTableNameModel() {
+        return m_tableNameModel;
+    }
+
+    /**
+     * Creates the table name settings model.
+     *
+     * @return a {@link SettingsModelDBMetadata} object.
+     */
+    protected SettingsModelDBMetadata createTableNameModel() {
+        return new SettingsModelDBMetadata("tableName");
     }
 
 }

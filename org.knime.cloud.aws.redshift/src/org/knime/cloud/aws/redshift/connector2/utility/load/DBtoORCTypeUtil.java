@@ -44,26 +44,67 @@
  * ---------------------------------------------------------------------
  *
  * History
- *   Jun 13, 2019 (Tobias): created
+ *   17.06.2019 (Mareike Hoeger, KNIME GmbH, Konstanz, Germany): created
  */
-package org.knime.cloud.aws.redshift.connector2.utility;
+package org.knime.cloud.aws.redshift.connector2.utility.load;
 
-import org.knime.cloud.aws.redshift.connector2.utility.load.RedshiftDBLoader;
-import org.knime.database.agent.loader.DBLoader;
-import org.knime.database.extension.postgres.PostgresAgentFactory;
+import java.sql.JDBCType;
+import java.sql.SQLType;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.orc.TypeDescription;
 
 /**
+ * Utility class for type mapping purposes in the DB Loader nodes for Hive/Impala
  *
- * @author Tobias Koetter, KNIME GmbH, Konstanz, Germany
+ * @author Mareike Hoeger, KNIME GmbH, Konstanz, Germany
  */
-public class RedshiftAgentFactory extends PostgresAgentFactory {
+public class DBtoORCTypeUtil {
+
+    private DBtoORCTypeUtil() {
+        //Utility class
+    }
+
+    private static final Map<SQLType, TypeDescription> m_JDBCToParquetMap = createParquetMap();
+
+    private static Map<SQLType, TypeDescription> createParquetMap() {
+        final Map<SQLType, TypeDescription> typeMap = new HashMap<>();
+        //NUMERIC
+        typeMap.put(JDBCType.INTEGER, TypeDescription.createInt());
+        typeMap.put(JDBCType.TINYINT, TypeDescription.createByte());
+        typeMap.put(JDBCType.SMALLINT, TypeDescription.createShort());
+        typeMap.put(JDBCType.BIGINT, TypeDescription.createLong());
+        typeMap.put(JDBCType.FLOAT, TypeDescription.createFloat());
+        typeMap.put(JDBCType.DOUBLE, TypeDescription.createDouble());
+        typeMap.put(JDBCType.DECIMAL, TypeDescription.createDecimal());
+
+        //Date/time
+        //BD-938: Timestamp needs to be INT96 (without OriginalType) instead of INT64 to be compatible with old Impala versions (< CDH 6.2) and Hive
+        typeMap.put(JDBCType.TIMESTAMP,  TypeDescription.createTimestamp());
+        typeMap.put(JDBCType.DATE, TypeDescription.createDate());
+
+        //STRING
+        typeMap.put(JDBCType.VARCHAR, TypeDescription.createString());
+        typeMap.put(JDBCType.CHAR, TypeDescription.createString());
+        typeMap.put(JDBCType.OTHER, TypeDescription.createString());
+
+        //MISC
+        typeMap.put(JDBCType.BOOLEAN, TypeDescription.createBoolean());
+        typeMap.put(JDBCType.BINARY, TypeDescription.createVarchar());
+
+        return typeMap;
+    }
 
     /**
-     * Constructor.
+     * Converts a Hive/Impala type String into the Parquet type
+     *
+     * @param sqlType the String to convert
+     * @return The corresponding Parquet type
+     *
      */
-    public RedshiftAgentFactory() {
-        super();
-        putCreator(DBLoader.class, parameters -> new RedshiftDBLoader(parameters.getSessionReference()));
+    public static TypeDescription dbToParquetType(final SQLType sqlType) {
+        return m_JDBCToParquetMap.get(sqlType);
     }
 
 }
