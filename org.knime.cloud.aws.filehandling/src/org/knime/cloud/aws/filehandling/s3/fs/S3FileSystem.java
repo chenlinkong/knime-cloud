@@ -48,9 +48,13 @@
  */
 package org.knime.cloud.aws.filehandling.s3.fs;
 
+import java.io.IOException;
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.Collections;
 
 import org.knime.cloud.aws.filehandling.s3.AwsUtils;
@@ -66,7 +70,12 @@ import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * The Amazon S3 implementation of the {@link FileSystem} interface.
@@ -85,6 +94,8 @@ public class S3FileSystem extends BaseFileSystem<S3Path> {
      */
     public static final String FS_TYPE = "amazon-s3";
 
+    private static final String AES256 = "AES256";
+
     private final S3Client m_client;
 
     private final boolean m_normalizePaths;
@@ -92,6 +103,9 @@ public class S3FileSystem extends BaseFileSystem<S3Path> {
     private final boolean m_sseEnabled;
     private final SSEMode m_sseMode;
     private final String m_kmsKeyId;
+
+    private final String m_customerKey;
+    private final String m_customerKeyMD5;
 
     /**
      * Constructs an S3FileSystem for the given URI
@@ -114,10 +128,23 @@ public class S3FileSystem extends BaseFileSystem<S3Path> {
         m_sseMode = settings.getSseMode();
         m_kmsKeyId = settings.getKmsKeyId();
         try {
+            m_customerKey = settings.getCustomerKey();
+            m_customerKeyMD5 = computeCustomerKeyMD5(m_customerKey);
             m_client = createClient(settings, connectionInformation);
         } catch (final Exception ex) {
             throw new IllegalArgumentException(ex);
         }
+    }
+
+    private static String computeCustomerKeyMD5(final String customerKey) throws NoSuchAlgorithmException {
+        if (customerKey == null) {
+            return null;
+        }
+
+        byte[] keyBytes = Base64.getDecoder().decode(customerKey);
+        byte[] md5 = MessageDigest.getInstance("MD5").digest(keyBytes);
+
+        return Base64.getEncoder().encodeToString(md5);
     }
 
     /**
@@ -158,21 +185,130 @@ public class S3FileSystem extends BaseFileSystem<S3Path> {
             if (m_sseMode == SSEMode.KMS && !m_kmsKeyId.isEmpty()) {
                 request.ssekmsKeyId(m_kmsKeyId);
             }
+
+            if (m_sseMode == SSEMode.CUSTOMER_PROVIDED) {
+                request.sseCustomerAlgorithm(AES256);
+                request.sseCustomerKey(m_customerKey);
+                request.sseCustomerKeyMD5(m_customerKeyMD5);
+            }
         }
     }
 
     /**
-     * Sets up necessary SSE parameters in case server-side encryption is enabled.
+     * Creates {@link CopyObjectRequest} builder instance. Sets up necessary SSE parameters in case server-side
+     * encryption is enabled.
      *
-     * @param request {@link CopyObjectRequest} builder.
+     * @param srcBucket The source bucket.
+     * @param srcBlob The source blob name.
+     * @param dstBucket The destination bucket.
+     * @param dstBlob The destination blob name.
+     *
+     * @return (@link CopyObjectRequest> builder instance.
+     * @throws IOException
      */
-    public void populateSseParams(final CopyObjectRequest.Builder request) {
+    public CopyObjectRequest.Builder createCopyRequestBuilder(final String srcBucket, final String srcBlob,
+        final String dstBucket, final String dstBlob) throws IOException {
+        CopyObjectRequest.Builder builder = CopyObjectRequest.builder()//
+            .copySource(AwsUtils.encodeCopySource(srcBucket, srcBlob))//
+            .destinationBucket(dstBucket).destinationKey(dstBlob);
+
         if (m_sseEnabled) {
-            request.serverSideEncryption(m_sseMode.getEncryption());
+            builder.serverSideEncryption(m_sseMode.getEncryption());
 
             if (m_sseMode == SSEMode.KMS && !m_kmsKeyId.isEmpty()) {
-                request.ssekmsKeyId(m_kmsKeyId);
+                builder.ssekmsKeyId(m_kmsKeyId);
             }
+
+            if (m_sseMode == SSEMode.CUSTOMER_PROVIDED) {
+                if (checkCustomerEncryption(srcBucket, srcBlob)) {
+                    builder.copySourceSSECustomerAlgorithm(AES256);
+                    builder.copySourceSSECustomerKey(m_customerKey);
+                    builder.copySourceSSECustomerKeyMD5(m_customerKeyMD5);
+                }
+                if (checkCustomerEncryption(dstBucket, dstBlob)) {
+                    builder.sseCustomerAlgorithm(AES256);
+                    builder.sseCustomerKey(m_customerKey);
+                    builder.sseCustomerKeyMD5(m_customerKeyMD5);
+                }
+            }
+        }
+        return builder;
+    }
+
+    /**
+     * Creates {@link GetObjectRequest} builder instance. Sets up necessary SSE parameters in case "customer-provided"
+     * server-side encryption mode is enabled.
+     *
+     * @param bucket The bucket name.
+     * @param blob The blob name.
+     * @return {@link GetObjectRequest} builder.
+     * @throws IOException
+     */
+    public GetObjectRequest.Builder createGetRequestBuilder(final String bucket, final String blob) throws IOException {
+        GetObjectRequest.Builder request = GetObjectRequest.builder()//
+            .bucket(bucket)//
+            .key(blob);
+
+        if (m_sseEnabled && m_sseMode == SSEMode.CUSTOMER_PROVIDED && checkCustomerEncryption(bucket, blob)) {
+            request.sseCustomerAlgorithm(AES256);
+            request.sseCustomerKey(m_customerKey);
+            request.sseCustomerKeyMD5(m_customerKeyMD5);
+        }
+
+        return request;
+    }
+
+    private boolean checkCustomerEncryption(final String bucket, final String blob) throws IOException {
+        HeadObjectResponse metadata = headObject(bucket, blob);
+        if (metadata.sseCustomerAlgorithm() != null) {
+            if (!m_customerKeyMD5.equals(metadata.sseCustomerKeyMD5())) {
+                throw new IOException(
+                    String.format("The object %s/%s is encrypted with the different customer key", bucket, blob));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Fetches object metatada. In case "customer-provided" SSE mode is enabled performs query in 2 steps:<br>
+     * 1. Attempts head request with SSE headers in place (for case when object is encrypted)<br>
+     * 2. If previous attempt fails falls back to regular request without SSE header (for case when object is not
+     * encrypted).
+     *
+     * @param bucket The bucket name.
+     * @param blob The blob name.
+     * @return The object metadata.
+     */
+    public HeadObjectResponse headObject(final String bucket, final String blob) {
+        HeadObjectRequest.Builder builder = HeadObjectRequest.builder().bucket(bucket).key(blob);
+
+        if (m_sseEnabled && m_sseMode == SSEMode.CUSTOMER_PROVIDED) {
+            HeadObjectRequest req = builder.copy()//
+                .sseCustomerAlgorithm(AES256)//
+                .sseCustomerKey(m_customerKey)//
+                .sseCustomerKeyMD5(m_customerKeyMD5)//
+                .build();
+
+            try {
+                return headObject(req);
+            } catch (S3Exception ex) {
+                if (ex.statusCode() == 400) {
+                    //do nothing, possibly object is not encrypted, will retry request without SSE params
+                } else {
+                    throw ex;
+                }
+            }
+        }
+
+        return headObject(builder.build());
+    }
+
+    private HeadObjectResponse headObject(final HeadObjectRequest request) {
+        try {
+            return m_client.headObject(request);
+        } catch (NoSuchKeyException ex) {//NOSONAR object doesn't exist
+            return null;
         }
     }
 

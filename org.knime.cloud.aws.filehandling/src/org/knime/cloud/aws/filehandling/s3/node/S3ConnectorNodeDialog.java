@@ -73,6 +73,7 @@ import org.knime.core.node.NodeLogger;
 import org.knime.core.node.NodeSettingsRO;
 import org.knime.core.node.NodeSettingsWO;
 import org.knime.core.node.NotConfigurableException;
+import org.knime.core.node.context.ports.PortsConfiguration;
 import org.knime.core.node.defaultnodesettings.DialogComponentBoolean;
 import org.knime.core.node.defaultnodesettings.DialogComponentNumber;
 import org.knime.core.node.port.PortObjectSpec;
@@ -88,7 +89,7 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
     private static final NodeLogger LOGGER = NodeLogger.getLogger(S3ConnectorNodeDialog.class);
 
     private final ChangeListener m_workdirListener;
-    private final S3ConnectorNodeSettings m_settings = new S3ConnectorNodeSettings();
+    private final S3ConnectorNodeSettings m_settings;
     private final WorkingDirectoryChooser m_workingDirChooser =
         new WorkingDirectoryChooser("s3.workingDir", this::createFSConnection);
 
@@ -96,8 +97,10 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
 
     private JComboBox<SSEMode> m_sseModeCombobox;
     private KmsKeyInputPanel m_kmsKeyInput;
+    private CustomerKeyInputPanel m_customerKeyInput;
 
-    S3ConnectorNodeDialog() {
+    S3ConnectorNodeDialog(final PortsConfiguration portsConfig) {
+        m_settings = new S3ConnectorNodeSettings(portsConfig);
         m_workdirListener = e -> m_settings.getWorkingDirectoryModel()
             .setStringValue(m_workingDirChooser.getSelectedWorkingDirectory());
 
@@ -152,10 +155,12 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
 
     private JComponent createEncryptionPanel() {
         m_kmsKeyInput = new KmsKeyInputPanel(m_settings.getKmsKeyIdModel());
+        m_customerKeyInput = new CustomerKeyInputPanel(m_settings, this);
 
         JPanel cards = new JPanel(new CardLayout());
         cards.add(new JPanel(), SSEMode.S3.getKey());
         cards.add(m_kmsKeyInput, SSEMode.KMS.getKey());
+        cards.add(m_customerKeyInput, SSEMode.CUSTOMER_PROVIDED.getKey());
 
         DialogComponentBoolean sseEnabled =
             new DialogComponentBoolean(m_settings.getSseEnabledModel(), "Enable server side encryption");
@@ -184,6 +189,7 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
         boolean enabled = m_settings.isSseEnabled();
         m_sseModeCombobox.setEnabled(enabled);
         m_kmsKeyInput.setEnabled(enabled);
+        m_customerKeyInput.setEnabled(enabled);
     }
 
     private FSConnection createFSConnection() throws IOException {
@@ -213,6 +219,7 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
 
         m_connInfo = ((CloudConnectionInformationPortObjectSpec)specs[0]).getConnectionInformation();
 
+        m_customerKeyInput.onSettingsLoaded(settings, specs);
         settingsLoaded();
     }
 

@@ -48,16 +48,33 @@
  */
 package org.knime.cloud.aws.filehandling.s3.node;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.EnumSet;
+import java.util.function.Consumer;
 
 import org.knime.cloud.aws.filehandling.s3.fs.S3FileSystem;
 import org.knime.core.node.InvalidSettingsException;
 import org.knime.core.node.NodeSettings;
 import org.knime.core.node.NodeSettingsRO;
 import org.knime.core.node.NodeSettingsWO;
+import org.knime.core.node.context.ports.PortsConfiguration;
 import org.knime.core.node.defaultnodesettings.SettingsModelBoolean;
 import org.knime.core.node.defaultnodesettings.SettingsModelIntegerBounded;
 import org.knime.core.node.defaultnodesettings.SettingsModelString;
+import org.knime.core.node.port.PortObjectSpec;
+import org.knime.core.node.util.CheckUtils;
+import org.knime.core.node.workflow.CredentialsProvider;
+import org.knime.core.node.workflow.ICredentials;
+import org.knime.filehandling.core.connections.FSPath;
+import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.ReadPathAccessor;
+import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.SettingsModelReaderFileChooser;
+import org.knime.filehandling.core.defaultnodesettings.filtermode.SettingsModelFilterMode.FilterMode;
+import org.knime.filehandling.core.defaultnodesettings.status.NodeModelStatusConsumer;
+import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage;
+import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage.MessageType;
 
 import software.amazon.awssdk.http.SdkHttpConfigurationOption;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
@@ -76,6 +93,9 @@ public class S3ConnectorNodeSettings {
     private static final boolean DEFAULT_SSE_ENABLED = false;
     private static final String DEFAULT_SSE_MODE = SSEMode.getDefault().getKey();
     private static final String DEFAULT_KMS_KEY_ID = "";
+    private static final CustomerKeySource DEFAULT_CUSTOMER_KEY_SOURCE = CustomerKeySource.SETTINGS;
+    private static final String DEFAULT_CUSTOMER_KEY = "";
+    private static final String DEFAULT_CUSTOMER_KEY_VAR = "";
 
     private static final String KEY_SOCKET_TIMEOUTS = "readWriteTimeoutInSeconds";
 
@@ -86,6 +106,10 @@ public class S3ConnectorNodeSettings {
     private static final String KEY_SSE_ENABLED = "sseEnabled";
     private static final String KEY_SSE_MODE = "sseMode";
     private static final String KEY_SSE_KMS_KEY_ID = "sseKmsKeyId";
+    private static final String KEY_SSE_CUSTOMER_KEY_SOURCE = "sseCustomerKeySource";
+    private static final String KEY_SSE_CUSTOMER_KEY = "sseCustomerKey";
+    private static final String KEY_SSE_CUSTOMER_KEY_VAR = "sseCustomerKeyVar";
+    private static final String KEY_SSE_CUSTOMER_KEY_FILE = "sseCustomerKeyFile";
 
     private final SettingsModelIntegerBounded m_socketTimeout;
 
@@ -97,10 +121,30 @@ public class S3ConnectorNodeSettings {
     private final SettingsModelString m_sseMode;
     private final SettingsModelString m_kmsKeyId;
 
+    private CustomerKeySource m_customerKeySource;
+    private final SettingsModelString m_customerKey;
+    private final SettingsModelString m_customerKeyVar;
+    private final SettingsModelReaderFileChooser m_customerKeyFile;
+
+    private final PortsConfiguration m_portConfig;
+
+    private CredentialsProvider m_credentialProvider;
+
     /**
-     * Creates new instance
+     * Constructor intended to be used outside of the {@link S3ConnectorNodeModel} (e.g. integration tests).
      */
     public S3ConnectorNodeSettings() {
+        this(null);
+    }
+
+    /**
+     * Creates new instance
+     *
+     * @param portsConfig Ports configuration.
+     */
+    public S3ConnectorNodeSettings(final PortsConfiguration portsConfig) {
+        m_portConfig = portsConfig;
+
         m_socketTimeout = new SettingsModelIntegerBounded(KEY_SOCKET_TIMEOUTS, Math.max(1, getDefaultSocketTimeout()),
             0, Integer.MAX_VALUE);
         m_normalizePath = new SettingsModelBoolean(KEY_NORMALIZE_PATHS, DEFAULT_NORMALIZE);
@@ -109,6 +153,17 @@ public class S3ConnectorNodeSettings {
         m_sseEnabled = new SettingsModelBoolean(KEY_SSE_ENABLED, DEFAULT_SSE_ENABLED);
         m_sseMode = new SettingsModelString(KEY_SSE_MODE, DEFAULT_SSE_MODE);
         m_kmsKeyId = new SettingsModelString(KEY_SSE_KMS_KEY_ID, DEFAULT_KMS_KEY_ID);
+
+        m_customerKeySource = DEFAULT_CUSTOMER_KEY_SOURCE;
+        m_customerKey = new SettingsModelString(KEY_SSE_CUSTOMER_KEY, DEFAULT_CUSTOMER_KEY);
+        m_customerKeyVar = new SettingsModelString(KEY_SSE_CUSTOMER_KEY_VAR, DEFAULT_CUSTOMER_KEY_VAR);
+
+        if (portsConfig != null) {
+            m_customerKeyFile = new SettingsModelReaderFileChooser(KEY_SSE_CUSTOMER_KEY_FILE, portsConfig,
+                S3ConnectorNodeFactory.FILE_SYSTEM_CONNECTION_PORT_NAME, FilterMode.FILE);
+        } else {
+            m_customerKeyFile = null;
+        }
     }
 
     private static int getDefaultSocketTimeout() {
@@ -205,6 +260,101 @@ public class S3ConnectorNodeSettings {
     }
 
     /**
+     * @return the customerKeySource
+     */
+    public CustomerKeySource getCustomerKeySource() {
+        return m_customerKeySource;
+    }
+
+    /**
+     * @param customerKeySource the customerKeySource to set
+     */
+    public void setCustomerKeySource(final CustomerKeySource customerKeySource) {
+        m_customerKeySource = customerKeySource;
+    }
+
+    /**
+     * @return the customerKey model
+     */
+    public SettingsModelString getCustomerKeyModel() {
+        return m_customerKey;
+    }
+
+    /**
+     * @return the customerKeyVar model
+     */
+    public SettingsModelString getCustomerKeyVarModel() {
+        return m_customerKeyVar;
+    }
+
+    /**
+     * @return the customerKeyFile model. Could be <code>null</code> in case settings instance was created without
+     *         providing {@link PortsConfiguration} object.
+     */
+    public SettingsModelReaderFileChooser getCustomerKeyFileModel() {
+        return m_customerKeyFile;
+    }
+
+    /**
+     * @param credentialProvider the credentialProvider to set
+     */
+    public void setCredentialProvider(final CredentialsProvider credentialProvider) {
+        m_credentialProvider = credentialProvider;
+    }
+
+    /**
+     * Retrieves customer SSE encryption key from the appropriate location according to settings.
+     *
+     * @return The customer SSE encryption key or <code>null</code> if SSE-C encryption mode is not enabled.
+     * @throws IOException
+     * @throws InvalidSettingsException
+     */
+    public String getCustomerKey() throws IOException, InvalidSettingsException {
+        if (!isSseEnabled() || getSseMode() != SSEMode.CUSTOMER_PROVIDED) {
+            return null;
+        }
+
+        String key = null;
+        switch (m_customerKeySource) {
+            case SETTINGS:
+                key = m_customerKey.getStringValue();
+                break;
+            case CREDENTIAL_VAR:
+                key = getCustomerKeyFromCredentials();
+                break;
+            case FILE:
+                key = getCustomerKeyFromFile();
+                break;
+        }
+        return key;
+    }
+
+    private String getCustomerKeyFromCredentials() throws InvalidSettingsException {
+        if (m_credentialProvider == null) {
+            throw new InvalidSettingsException("No credential provider is available");
+        }
+
+        String name = m_customerKeyVar.getStringValue();
+        ICredentials creds = m_credentialProvider.get(name);
+
+        if (creds == null) {
+            throw new InvalidSettingsException("Credentials not found: " + name);
+        }
+        return creds.getPassword();
+    }
+
+    private String getCustomerKeyFromFile() throws IOException, InvalidSettingsException {
+        final NodeModelStatusConsumer statusConsumer =
+            new NodeModelStatusConsumer(EnumSet.of(MessageType.ERROR, MessageType.WARNING));
+
+        try (ReadPathAccessor accessor = m_customerKeyFile.createReadPathAccessor()) {
+            FSPath path = accessor.getRootPath(statusConsumer);
+            byte[] bytes = Files.readAllBytes(path);
+            return Base64.getEncoder().encodeToString(bytes);
+        }
+    }
+
+    /**
      * Saves the settings in this instance to the given {@link NodeSettingsWO}
      *
      * @param settings Node settings.
@@ -216,6 +366,12 @@ public class S3ConnectorNodeSettings {
         m_sseEnabled.saveSettingsTo(settings);
         m_sseMode.saveSettingsTo(settings);
         m_kmsKeyId.saveSettingsTo(settings);
+        settings.addString(KEY_SSE_CUSTOMER_KEY_SOURCE, m_customerKeySource.getKey());
+        m_customerKey.saveSettingsTo(settings);
+        m_customerKeyVar.saveSettingsTo(settings);
+        if (m_customerKeyFile != null) {
+            m_customerKeyFile.saveSettingsTo(settings);
+        }
     }
 
     /**
@@ -234,12 +390,19 @@ public class S3ConnectorNodeSettings {
         }
         if (settings.containsKey(KEY_SSE_ENABLED)) {
             m_sseEnabled.validateSettings(settings);
-        }
-        if (settings.containsKey(KEY_SSE_MODE)) {
             m_sseMode.validateSettings(settings);
-        }
-        if (settings.containsKey(KEY_SSE_KMS_KEY_ID)) {
             m_kmsKeyId.validateSettings(settings);
+            m_customerKey.validateSettings(settings);
+            m_customerKeyVar.validateSettings(settings);
+
+            if (m_customerKeyFile != null) {
+                m_customerKeyFile.validateSettings(settings);
+            }
+
+            String key = settings.getString(KEY_SSE_CUSTOMER_KEY_SOURCE);
+            if (CustomerKeySource.fromKey(key) == null) {
+                throw new InvalidSettingsException("Invalid customer key source: " + key);
+            }
         }
     }
 
@@ -265,10 +428,20 @@ public class S3ConnectorNodeSettings {
             m_sseEnabled.loadSettingsFrom(settings);
             m_sseMode.loadSettingsFrom(settings);
             m_kmsKeyId.loadSettingsFrom(settings);
+            m_customerKey.loadSettingsFrom(settings);
+            m_customerKeyVar.loadSettingsFrom(settings);
+
+            if (m_customerKeyFile != null) {
+                m_customerKeyFile.loadSettingsFrom(settings);
+            }
+            m_customerKeySource = CustomerKeySource.fromKey(settings.getString(KEY_SSE_CUSTOMER_KEY_SOURCE));
         } else {
             m_sseEnabled.setBooleanValue(DEFAULT_SSE_ENABLED);
             m_sseMode.setStringValue(DEFAULT_SSE_MODE);
             m_kmsKeyId.setStringValue(DEFAULT_KMS_KEY_ID);
+            m_customerKey.setStringValue(DEFAULT_CUSTOMER_KEY);
+            m_customerKeyVar.setStringValue(DEFAULT_CUSTOMER_KEY_VAR);
+            m_customerKeySource = DEFAULT_CUSTOMER_KEY_SOURCE;
         }
     }
 
@@ -277,13 +450,26 @@ public class S3ConnectorNodeSettings {
         NodeSettings transferSettings = new NodeSettings("ignored");
         saveSettingsTo(transferSettings);
 
-        S3ConnectorNodeSettings clone = new S3ConnectorNodeSettings();
+        S3ConnectorNodeSettings clone = new S3ConnectorNodeSettings(m_portConfig);
         try {
             clone.loadSettingsFrom(transferSettings);
         } catch (InvalidSettingsException ex) {
             throw new IllegalStateException(ex);
         }
         return clone;
+    }
+
+    /**
+     * Configures {@link SettingsModelReaderFileChooser} settings.
+     *
+     * @param inSpecs Input specs.
+     * @param msgConsumer Message consumer.
+     * @throws InvalidSettingsException
+     */
+    public void configureFileChoosersInModel(final PortObjectSpec[] inSpecs, final Consumer<StatusMessage> msgConsumer)
+        throws InvalidSettingsException {
+        CheckUtils.checkState(m_customerKeyFile != null, "Settings instance was created without PortsConfiguration");
+        m_customerKeyFile.configureInModel(inSpecs, msgConsumer);
     }
 
     /**
@@ -294,11 +480,15 @@ public class S3ConnectorNodeSettings {
             /**
              * SSE-S3 mode
              */
-            S3("Use Amazon S3-Managed Encryption Keys (SSE-S3)", "SSE-S3",ServerSideEncryption.AES256),
+            S3("Use Amazon S3-Managed Encryption Keys (SSE-S3)", "SSE-S3", ServerSideEncryption.AES256),
             /**
              * SSE-KMS mode
              */
-            KMS("Use CMKs Stored in AWS Key Management Service (SSE-KMS)", "SSE-KMS",ServerSideEncryption.AWS_KMS);
+            KMS("Use CMKs Stored in AWS Key Management Service (SSE-KMS)", "SSE-KMS", ServerSideEncryption.AWS_KMS),
+            /**
+             * SSE-C mode
+             */
+            CUSTOMER_PROVIDED("SSE-C", "SSE-C", null);
 
         private String m_title;
         private String m_key;
@@ -348,6 +538,66 @@ public class S3ConnectorNodeSettings {
                 }
             }
             return getDefault();
+        }
+    }
+
+    /**
+     * Enum representing different sources for the customer provided key.
+     */
+    public enum CustomerKeySource {
+            /**
+             * Key in stored in node settings.
+             */
+            SETTINGS("Enter key", "settings"),
+            /**
+             * Key is stored in the credential flow variable.
+             */
+            CREDENTIAL_VAR("Credential flow variable", "credential"),
+            /**
+             * Key is stored in file.
+             */
+            FILE("Key file", "file");
+
+        private String m_title;
+        private String m_key;
+
+        private CustomerKeySource(final String title, final String key) {
+            m_title = title;
+            m_key = key;
+        }
+
+        /**
+         * @return the key
+         */
+        public String getKey() {
+            return m_key;
+        }
+
+        /**
+         * @return the title
+         */
+        public String getTitle() {
+            return m_title;
+        }
+
+        /**
+         * @return The default mode.
+         */
+        public static CustomerKeySource getDefault() {
+            return SETTINGS;
+        }
+
+        /**
+         * @param key The customer key source node settings key.
+         * @return The key source with the given settings key or <code>null</code>.
+         */
+        public static CustomerKeySource fromKey(final String key) {
+            for (CustomerKeySource source : values()) {
+                if (source.getKey().equals(key)) {
+                    return source;
+                }
+            }
+            return null;
         }
     }
 }

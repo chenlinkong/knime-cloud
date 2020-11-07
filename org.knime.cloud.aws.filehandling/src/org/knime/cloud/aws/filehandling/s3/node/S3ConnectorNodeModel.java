@@ -50,10 +50,14 @@ package org.knime.cloud.aws.filehandling.s3.node;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.EnumSet;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.knime.cloud.aws.filehandling.s3.fs.S3FSConnection;
 import org.knime.cloud.aws.filehandling.s3.fs.S3FileSystem;
+import org.knime.cloud.aws.filehandling.s3.node.S3ConnectorNodeSettings.CustomerKeySource;
+import org.knime.cloud.aws.filehandling.s3.node.S3ConnectorNodeSettings.SSEMode;
 import org.knime.cloud.aws.util.AmazonConnectionInformationPortObject;
 import org.knime.cloud.core.util.port.CloudConnectionInformation;
 import org.knime.cloud.core.util.port.CloudConnectionInformationPortObjectSpec;
@@ -64,11 +68,14 @@ import org.knime.core.node.InvalidSettingsException;
 import org.knime.core.node.NodeModel;
 import org.knime.core.node.NodeSettingsRO;
 import org.knime.core.node.NodeSettingsWO;
+import org.knime.core.node.context.ports.PortsConfiguration;
 import org.knime.core.node.port.PortObject;
 import org.knime.core.node.port.PortObjectSpec;
-import org.knime.core.node.port.PortType;
 import org.knime.filehandling.core.connections.FSConnectionRegistry;
 import org.knime.filehandling.core.connections.FSLocationSpec;
+import org.knime.filehandling.core.defaultnodesettings.status.NodeModelStatusConsumer;
+import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage;
+import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage.MessageType;
 import org.knime.filehandling.core.port.FileSystemPortObject;
 import org.knime.filehandling.core.port.FileSystemPortObjectSpec;
 
@@ -79,10 +86,12 @@ import software.amazon.awssdk.awscore.exception.AwsServiceException;
  * @author Mareike Hoeger, KNIME GmbH, Konstanz, Germany
  */
 public class S3ConnectorNodeModel extends NodeModel {
+    private static final Consumer<StatusMessage> NOOP_STATUS_CONSUMER = s -> {
+    };
 
     private static final String FILE_SYSTEM_NAME = "Amazon S3";
 
-    private S3ConnectorNodeSettings m_settings = new S3ConnectorNodeSettings();
+    private S3ConnectorNodeSettings m_settings;
 
     private S3FSConnection m_fsConn;
 
@@ -90,20 +99,43 @@ public class S3ConnectorNodeModel extends NodeModel {
 
     private AmazonConnectionInformationPortObject m_awsConnectionInfo;
 
+    private final NodeModelStatusConsumer m_statusConsumer =
+        new NodeModelStatusConsumer(EnumSet.of(MessageType.ERROR, MessageType.WARNING));
+
     /**
      * The NodeModel for the S3Connection node
+     *
+     * @param portsConfig Ports configuration
      */
-    public S3ConnectorNodeModel() {
-        super(new PortType[]{AmazonConnectionInformationPortObject.TYPE}, new PortType[]{FileSystemPortObject.TYPE});
+    public S3ConnectorNodeModel(final PortsConfiguration portsConfig) {
+        super(portsConfig.getInputPorts(), portsConfig.getOutputPorts());
+        m_settings = new S3ConnectorNodeSettings(portsConfig);
     }
 
     @Override
-    protected PortObjectSpec[] configure(final PortObjectSpec[] inSpecs) {
+    protected PortObjectSpec[] configure(final PortObjectSpec[] inSpecs) throws InvalidSettingsException {
         m_fsId = FSConnectionRegistry.getInstance().getKey();
+        configureFileChooser(inSpecs);
 
         final CloudConnectionInformation conInfo =
             ((CloudConnectionInformationPortObjectSpec)inSpecs[0]).getConnectionInformation();
         return new PortObjectSpec[]{createSpec(conInfo)};
+    }
+
+    private void configureFileChooser(final PortObjectSpec[] inSpecs) throws InvalidSettingsException {
+        boolean fileChooserUsed = m_settings.isSseEnabled() && m_settings.getSseMode() == SSEMode.CUSTOMER_PROVIDED
+            && m_settings.getCustomerKeySource() == CustomerKeySource.FILE;
+
+        try {
+            final Consumer<StatusMessage> msgConsumer = fileChooserUsed ? m_statusConsumer : NOOP_STATUS_CONSUMER;
+            m_settings.configureFileChoosersInModel(inSpecs, msgConsumer);
+        } catch (InvalidSettingsException e) {
+            // only rethrow the InvalidSettingsException when we are actually using file
+            // chooser
+            if (fileChooserUsed) {
+                throw e;
+            }
+        }
     }
 
     private FileSystemPortObjectSpec createSpec(final CloudConnectionInformation conInfo) {
@@ -114,6 +146,7 @@ public class S3ConnectorNodeModel extends NodeModel {
     @Override
     protected PortObject[] execute(final PortObject[] inObjects, final ExecutionContext exec) throws Exception {
         m_awsConnectionInfo = (AmazonConnectionInformationPortObject)inObjects[0];
+        m_settings.setCredentialProvider(getCredentialsProvider());
 
         //TODO: Test if connection is available and if switch role is required!!!
 

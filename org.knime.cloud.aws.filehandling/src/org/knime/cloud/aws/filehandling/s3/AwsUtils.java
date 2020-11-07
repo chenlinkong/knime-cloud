@@ -49,6 +49,9 @@
 package org.knime.cloud.aws.filehandling.s3;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 
 import javax.crypto.BadPaddingException;
@@ -135,5 +138,17 @@ public final class AwsUtils {
     private static String buildARN(final CloudConnectionInformation connectionInformation) {
         return "arn:aws:iam::" + connectionInformation.getSwitchRoleAccount() + ":role/"
             + connectionInformation.getSwitchRoleName();
+    }
+
+    /**
+     * Encodes the bucket and the blob name into URL-encoded 'copy-source' string.
+     *
+     * @param bucket The bucket name.
+     * @param blob The blob name.
+     * @return Copy-source string.
+     * @throws UnsupportedEncodingException
+     */
+    public static String encodeCopySource(final String bucket, final String blob) throws UnsupportedEncodingException {
+        return URLEncoder.encode(bucket + "/" + blob, StandardCharsets.UTF_8.toString());
     }
 }
