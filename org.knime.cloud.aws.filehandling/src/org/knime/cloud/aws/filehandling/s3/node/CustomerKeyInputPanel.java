@@ -44,7 +44,7 @@
  * ---------------------------------------------------------------------
  *
  * History
- *   4 окт. 2020 г. (Alexander Bondaletov): created
+ *   2020-10-04 (Alexander Bondaletov): created
  */
 package org.knime.cloud.aws.filehandling.s3.node;
 

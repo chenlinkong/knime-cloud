@@ -488,7 +488,7 @@ public class S3ConnectorNodeSettings {
             /**
              * SSE-C mode
              */
-            CUSTOMER_PROVIDED("SSE-C", "SSE-C", null);
+            CUSTOMER_PROVIDED("Use customer-provided encryption keys (SSE-C)", "SSE-C", null);
 
         private String m_title;
         private String m_key;
