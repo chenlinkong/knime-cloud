@@ -69,7 +69,10 @@
 	<ports>
 	     <inPort index="0" name="Connection information port">
         	Port object containing the AWS connection information.
-        </inPort>  
+        </inPort>
+        <dynInPort insert-before="0" name="File System Connection" group-identifier="File System Connection"> 
+			A file system connection to read/write the customer key, when <b>SSE-C</b> encryption mode is enabled.
+		</dynInPort>  
 		<outPort index="0" name="S3 File System Connection">S3 File System Connection</outPort>
 	</ports>        
 </knimeNode>
