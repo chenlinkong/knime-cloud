@@ -70,7 +70,6 @@ import org.knime.core.node.workflow.VariableType.CredentialsType;
 import org.knime.filehandling.core.data.location.variable.FSLocationVariableType;
 import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.DialogComponentReaderFileChooser;
 import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.SettingsModelReaderFileChooser;
-import org.knime.filehandling.core.defaultnodesettings.filtermode.SettingsModelFilterMode.FilterMode;
 
 /**
  * Component for editing customer key settings for the SSE-C encryption mode. Allows entering the key directly,
@@ -115,7 +114,7 @@ public class CustomerKeyInputPanel extends JPanel {
         final SettingsModelReaderFileChooser fileModel = m_settings.getCustomerKeyFileModel();
         final FlowVariableModel fvm =
             m_parent.createFlowVariableModel(fileModel.getKeysForFSLocation(), FSLocationVariableType.INSTANCE);
-        m_fileChooser = new DialogComponentReaderFileChooser(fileModel, "s3_sse_customer_key", fvm, FilterMode.FILE);
+        m_fileChooser = new DialogComponentReaderFileChooser(fileModel, "s3_sse_customer_key", fvm);
 
         setLayout(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();

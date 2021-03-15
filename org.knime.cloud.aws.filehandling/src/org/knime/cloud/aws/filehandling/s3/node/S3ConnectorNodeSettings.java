@@ -69,6 +69,7 @@ import org.knime.core.node.util.CheckUtils;
 import org.knime.core.node.workflow.CredentialsProvider;
 import org.knime.core.node.workflow.ICredentials;
 import org.knime.filehandling.core.connections.FSPath;
+import org.knime.filehandling.core.defaultnodesettings.EnumConfig;
 import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.ReadPathAccessor;
 import org.knime.filehandling.core.defaultnodesettings.filechooser.reader.SettingsModelReaderFileChooser;
 import org.knime.filehandling.core.defaultnodesettings.filtermode.SettingsModelFilterMode.FilterMode;
@@ -166,7 +167,7 @@ public class S3ConnectorNodeSettings {
 
         if (portsConfig != null) {
             m_customerKeyFile = new SettingsModelReaderFileChooser(KEY_SSE_CUSTOMER_KEY_FILE, portsConfig,
-                S3ConnectorNodeFactory.FILE_SYSTEM_CONNECTION_PORT_NAME, FilterMode.FILE);
+                S3ConnectorNodeFactory.FILE_SYSTEM_CONNECTION_PORT_NAME, EnumConfig.create(FilterMode.FILE));
         } else {
             m_customerKeyFile = null;
         }
