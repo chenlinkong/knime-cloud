@@ -52,7 +52,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.Objects;
-import java.util.function.Consumer;
 
 import org.knime.cloud.aws.filehandling.s3.fs.S3FSConnection;
 import org.knime.cloud.aws.filehandling.s3.fs.S3FileSystem;
@@ -74,7 +73,6 @@ import org.knime.core.node.port.PortObjectSpec;
 import org.knime.filehandling.core.connections.FSConnectionRegistry;
 import org.knime.filehandling.core.connections.FSLocationSpec;
 import org.knime.filehandling.core.defaultnodesettings.status.NodeModelStatusConsumer;
-import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage;
 import org.knime.filehandling.core.defaultnodesettings.status.StatusMessage.MessageType;
 import org.knime.filehandling.core.port.FileSystemPortObject;
 import org.knime.filehandling.core.port.FileSystemPortObjectSpec;
@@ -86,9 +84,6 @@ import software.amazon.awssdk.awscore.exception.AwsServiceException;
  * @author Mareike Hoeger, KNIME GmbH, Konstanz, Germany
  */
 public class S3ConnectorNodeModel extends NodeModel {
-    private static final Consumer<StatusMessage> NOOP_STATUS_CONSUMER = s -> {
-    };
-
     private static final NodeLogger LOG = NodeLogger.getLogger(S3ConnectorNodeModel.class);
 
     private static final String FILE_SYSTEM_NAME = "Amazon S3";
@@ -125,15 +120,9 @@ public class S3ConnectorNodeModel extends NodeModel {
         boolean fileChooserUsed = m_settings.isSseEnabled() && m_settings.getSseMode() == SSEMode.CUSTOMER_PROVIDED
             && m_settings.getCustomerKeySource() == CustomerKeySource.FILE;
 
-        try {
-            final Consumer<StatusMessage> msgConsumer = fileChooserUsed ? m_statusConsumer : NOOP_STATUS_CONSUMER;
-            m_settings.configureFileChoosersInModel(inSpecs, msgConsumer);
-        } catch (InvalidSettingsException e) {
-            // only rethrow the InvalidSettingsException when we are actually using file
-            // chooser
-            if (fileChooserUsed) {
-                throw e;
-            }
+        if (fileChooserUsed) {
+            m_settings.configureFileChoosersInModel(inSpecs, m_statusConsumer);
+            m_statusConsumer.setWarningsIfRequired(this::setWarningMessage);
         }
     }
 
@@ -145,10 +134,9 @@ public class S3ConnectorNodeModel extends NodeModel {
     @Override
     protected PortObject[] execute(final PortObject[] inObjects, final ExecutionContext exec) throws Exception {
         m_awsConnectionInfo = (AmazonConnectionInformationPortObject)inObjects[0];
-        m_settings.setCredentialProvider(getCredentialsProvider());
 
         final CloudConnectionInformation conInfo = m_awsConnectionInfo.getConnectionInformation();
-        m_fsConn = new S3FSConnection(conInfo, m_settings);
+        m_fsConn = new S3FSConnection(conInfo, m_settings, getCredentialsProvider());
         FSConnectionRegistry.getInstance().register(m_fsId, m_fsConn);
 
         if (conInfo.isUseAnonymous()) {

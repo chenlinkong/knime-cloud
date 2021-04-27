@@ -128,14 +128,16 @@ public class CustomerKeyInputPanel extends JPanel {
         add(rbEnterKey, c);
 
         c.gridx = 1;
-        add(keyInput.getComponentPanel(), c);
+        c.fill = GridBagConstraints.HORIZONTAL;
+        add(keyInput.getComponentPanel().getComponent(1), c);
 
+        c.fill = GridBagConstraints.NONE;
         c.gridy += 1;
         c.gridx = 0;
         add(rbSelectCreds, c);
 
         c.gridx = 1;
-        add(m_flowVarSelector.getComponentPanel(), c);
+        add(m_flowVarSelector.getComponentPanel().getComponent(1), c);
 
         c.gridx = 0;
         c.gridy += 1;

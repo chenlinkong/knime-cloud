@@ -55,6 +55,7 @@ import java.util.Base64;
 import java.util.EnumSet;
 import java.util.function.Consumer;
 
+import org.knime.cloud.aws.filehandling.s3.AwsUtils;
 import org.knime.cloud.aws.filehandling.s3.fs.S3FileSystem;
 import org.knime.core.node.InvalidSettingsException;
 import org.knime.core.node.NodeSettings;
@@ -134,7 +135,6 @@ public class S3ConnectorNodeSettings {
     private final SettingsModelReaderFileChooser m_customerKeyFile;
 
     private final PortsConfiguration m_portConfig;
-    private CredentialsProvider m_credentialProvider;
 
     /**
      * Constructor intended to be used outside of the {@link S3ConnectorNodeModel} (e.g. integration tests).
@@ -327,20 +327,15 @@ public class S3ConnectorNodeSettings {
     }
 
     /**
-     * @param credentialProvider the credentialProvider to set
-     */
-    public void setCredentialProvider(final CredentialsProvider credentialProvider) {
-        m_credentialProvider = credentialProvider;
-    }
-
-    /**
      * Retrieves customer SSE encryption key from the appropriate location according to settings.
+     *
+     * @param credentials Credential provider. Used only in case when customer key is stored in credentials variable.
      *
      * @return The customer SSE encryption key or <code>null</code> if SSE-C encryption mode is not enabled.
      * @throws IOException
      * @throws InvalidSettingsException
      */
-    public String getCustomerKey() throws IOException, InvalidSettingsException {
+    public String getCustomerKey(final CredentialsProvider credentials) throws IOException, InvalidSettingsException {
         if (!isSseEnabled() || getSseMode() != SSEMode.CUSTOMER_PROVIDED) {
             return null;
         }
@@ -351,7 +346,7 @@ public class S3ConnectorNodeSettings {
                 key = m_customerKey.getStringValue();
                 break;
             case CREDENTIAL_VAR:
-                key = getCustomerKeyFromCredentials();
+                key = getCustomerKeyFromCredentials(credentials);
                 break;
             case FILE:
                 key = getCustomerKeyFromFile();
@@ -360,13 +355,13 @@ public class S3ConnectorNodeSettings {
         return key;
     }
 
-    private String getCustomerKeyFromCredentials() throws InvalidSettingsException {
-        if (m_credentialProvider == null) {
+    private String getCustomerKeyFromCredentials(final CredentialsProvider credentials) throws InvalidSettingsException {
+        if (credentials == null) {
             throw new InvalidSettingsException("No credential provider is available");
         }
 
         String name = m_customerKeyVar.getStringValue();
-        ICredentials creds = m_credentialProvider.get(name);
+        ICredentials creds = credentials.get(name);
 
         if (creds == null) {
             throw new InvalidSettingsException("Credentials not found: " + name);
@@ -441,8 +436,14 @@ public class S3ConnectorNodeSettings {
             }
 
             String key = settings.getString(KEY_SSE_CUSTOMER_KEY_SOURCE);
-            if (CustomerKeySource.fromKey(key) == null) {
+            CustomerKeySource keySource = CustomerKeySource.fromKey(key);
+            if (keySource == null) {
                 throw new InvalidSettingsException("Invalid customer key source: " + key);
+            }
+
+            if (keySource == CustomerKeySource.SETTINGS) {
+                //Validate that the key is base64 string of the proper size
+                AwsUtils.getCustomerKeyBytes(settings.getString(KEY_SSE_CUSTOMER_KEY));
             }
         }
     }
@@ -594,11 +595,11 @@ public class S3ConnectorNodeSettings {
             /**
              * Key in stored in node settings.
              */
-            SETTINGS("Enter key", "settings"),
+            SETTINGS("Enter key (base64 encoded)", "settings"),
             /**
              * Key is stored in the credential flow variable.
              */
-            CREDENTIAL_VAR("Credential flow variable", "credential"),
+            CREDENTIAL_VAR("Credential flow variable (base64 encoded)", "credential"),
             /**
              * Key is stored in file.
              */

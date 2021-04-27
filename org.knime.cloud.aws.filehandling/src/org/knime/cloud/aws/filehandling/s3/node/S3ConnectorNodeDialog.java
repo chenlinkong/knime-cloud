@@ -264,7 +264,7 @@ public class S3ConnectorNodeDialog extends NodeDialogPane {
 
     private FSConnection createFSConnection() {
         S3ConnectorNodeSettings clonedSettings = m_settings.createClone();
-        return new S3FSConnection(m_connInfo, clonedSettings);
+        return new S3FSConnection(m_connInfo, clonedSettings, getCredentialsProvider());
     }
 
     /**
